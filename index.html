@@ -217,13 +217,44 @@
         }
         updateSmoothFollow();
 
-        function showGestureImage(imgName, patternKey) {
-            if (displayImg.src.indexOf(encodeURIComponent(imgName)) === -1) {
-                displayImg.src = imgName;
-                displayImg.classList.add('show');
-            }
-            activePattern = patternKey; 
-        }
+         function showGestureImage(imgName, patternKey) {
+        // 基础路径（你的 GitHub Raw 地址）
+        const baseUrl = 'https://raw.githubusercontent.com/cherrilika1319-hushhush/InteractivePageDisplay/main/';
+        
+        // 构建完整图片地址
+        const imageUrl = baseUrl + imgName;
+        
+        console.log(`[手势匹配] 加载图片: ${imageUrl}，模式: ${patternKey}`);
+        
+        // 显示加载中状态
+        displayImg.style.opacity = '0.6';
+        
+        // 预加载图片，确保加载成功后再显示
+        const testImg = new Image();
+        testImg.onload = () => {
+            console.log(`✅ 图片加载成功: ${imgName}`);
+            displayImg.src = imageUrl;
+            displayImg.classList.add('show');
+            displayImg.style.opacity = '1';
+            activePattern = patternKey;
+        };
+        testImg.onerror = () => {
+            console.error(`❌ 图片加载失败: ${imgName}，请检查文件名`);
+            // 显示文字提示作为降级方案
+            displayImg.classList.remove('show');
+            const canvas = document.createElement('canvas');
+            canvas.width = 400;
+            canvas.height = 200;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = '#e0aaff';
+            ctx.font = '20px monospace';
+            ctx.fillText(`⚠️ 未找到: ${imgName}`, 20, 100);
+            displayImg.src = canvas.toDataURL();
+            displayImg.classList.add('show');
+            activePattern = patternKey;
+        };
+        testImg.src = imageUrl;
+    }
 
         function hideGestureImage() {
             displayImg.classList.remove('show');
