@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D 淡紫流体粒子 - 字母阴影轮廓光晕版</title>
+    <style>
+        body { margin: 0; background-color: #04020f; color: #fff; font-family: monospace; overflow: hidden; user-select: none; }
+        #canvas-3d { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 1; }
+        #webcam { position: absolute; bottom: 20px; right: 20px; width: 180px; height: 135px; object-fit: contain; transform: scaleX(-1); border: 1px solid rgba(162, 132, 242, 0.2); border-radius: 8px; z-index: 10; opacity: 0.5; background: #000; }
+        
+        #ui-panel { position: absolute; top: 20px; right: 20px; background: rgba(10, 7, 24, 0.85); padding: 15px 25px; border-radius: 12px; z-index: 10; border: 1px solid rgba(162, 132, 242, 0.3); box-shadow: 0 0 20px rgba(0,0,0,0.6); width: 220px; }
+        .info-item { margin: 10px 0; font-size: 14px; color: #b2bec3; }
+        .info-val { font-weight: bold; float: right; }
+        .gesture-active { color: #e0aaff; text-shadow: 0 0 10px rgba(224,170,255,0.6); font-size: 16px; }
+
+        /* 🔮 图片渲染图层置顶 */
+        #gesture-image-container {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 5;
+            pointer-events: none;
+            will-change: transform;
+        }
+        #display-img {
+            max-width: 420px;
+            max-height: 420px;
+            object-fit: contain;
+            opacity: 0;
+            transform: scale(0.7);
+            transition: opacity 0.25s ease, transform 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.15);
+            filter: drop-shadow(0 0 20px rgba(162, 132, 242, 0.4));
+        }
+        #display-img.show {
+            opacity: 1;
+            transform: scale(1);
+        }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+</head>
+<body>
+
+    <canvas id="canvas-3d"></canvas>
+    <video id="webcam" autoplay playsinline></video>
+
+    <div id="gesture-image-container">
+        <img id="display-img" src="" alt="Gesture Action">
+    </div>
+
+    <div id="ui-panel">
+        <div class="info-item">粒子模式: <span class="info-val" style="color:#e0aaff;">呼吸星空</span></div>
+        <div class="info-item">捕捉手数量: <span id="ui-hands" class="info-val">0</span></div>
+        <div class="info-item" style="border-top:1px solid rgba(162, 132, 242, 0.2); padding-top:10px; margin-top:10px;">
+            当前匹配状态:<br>
+            <span id="ui-gesture" class="info-val gesture-active" style="float:none; display:block; margin-top:5px; text-align:center;">✨ 漫天璀璨星光</span>
+        </div>
+    </div>
+
+    <script>
+        // ==================== 1. THREE.JS 星空留驻与影子光晕引擎 ====================
+        const canvas3D = document.getElementById('canvas-3d');
+        const scene = new THREE.Scene();
+        const camera3D = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera3D.position.z = 30;
+
+        const renderer = new THREE.WebGLRenderer({ canvas: canvas3D, antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+        const particleCount = 18000;
+        const geometry = new THREE.BufferGeometry();
+        const positions = new Float32Array(particleCount * 3);
+        const colors = new Float32Array(particleCount * 3);
+
+        const starFields = []; 
+        let activePattern = "standby"; 
+        let pCenter = new THREE.Vector3(0, 0, 0);
+        let targetPCenter = new THREE.Vector3(0, 0, 0);
+
+        const colorObj = new THREE.Color();
+
+        for (let i = 0; i < particleCount; i++) {
+            // 星空无规则全屏散落
+            const sX = (Math.random() - 0.5) * 75;
+            const sY = (Math.random() - 0.5) * 55;
+            const sZ = (Math.random() - 0.5) * 30;
+
+            positions[i*3] = sX; positions[i*3+1] = sY; positions[i*3+2] = sZ;
+
+            // 一半粒子具备手势吸附能力，一半永久留在背景游动
+            const isGatherable = i % 2 === 0;
+
+            const rand = Math.random();
+            let lX=0, lY=0, oX=0, oY=0, eX=0, eY=0, hX=0, hY=0;
+
+            // 🌟 【重构 L】让粒子像英文字母串的“动态影子”一样，排布在横向拉伸的字母骨架边缘上
+            // 模拟“L-O-V-E”这类多个字母并排的外轮廓字形阴影范围（水平铺开，带轻微的高低起伏）
+            lX = (Math.random() - 0.5) * 16;  // 水平延伸契合整串英文字母的宽度
+            lY = (Math.random() - 0.5) * 3.5 + Math.sin(lX * 0.5) * 0.5; // 高度贴合，并带一点字形波动
+
+            // O 轮廓：中空的、正圆形的圆环发光体
+            const oAng = Math.random() * Math.PI * 2;
+            const oRad = 5.5 + Math.random() * 1.5; 
+            oX = Math.cos(oAng) * oRad;
+            oY = Math.sin(oAng) * oRad;
+
+            // E 轮廓：图片周围扩散环绕的多层朦胧背光晕
+            const eAng = Math.random() * Math.PI * 2;
+            const eRad = 6.5 + Math.random() * 4.0; 
+            eX = Math.cos(eAng) * eRad;
+            eY = Math.sin(eAng) * eRad;
+
+            // 爱心与V手势的桃心光晕
+            const t = Math.PI * (2 * Math.random() - 1);
+            hX = 0.45 * (16 * Math.pow(Math.sin(t), 3));
+            hY = 0.45 * (13 * Math.cos(t) - 5 * Math.cos(2*t) - 2 * Math.cos(3*t) - Math.cos(4*t)) + 1;
+
+            starFields.push({
+                originX: sX, originY: sY, originZ: sZ,
+                speedX: (Math.random() - 0.5) * 0.016,
+                speedY: (Math.random() - 0.5) * 0.016,
+                isGatherable: isGatherable, 
+                L: {x: lX, y: lY, z: (Math.random()-0.5)*1.5},
+                O: {x: oX, y: oY, z: (Math.random()-0.5)*2},
+                E: {x: eX, y: eY, z: (Math.random()-0.5)*4},
+                V: {x: hX * 1.1, y: hY * 1.1 - 2, z: (Math.random()-0.5)*2},
+                Heart: {x: hX, y: hY, z: (Math.random()-0.5)*2}
+            });
+
+            // 梦幻淡紫色系
+            colorObj.setHSL(0.74 + (Math.random() * 0.04), 0.65, 0.64 + (Math.random() * 0.08));
+            colors[i*3] = colorObj.r; colors[i*3+1] = colorObj.g; colors[i*3+2] = colorObj.b;
+        }
+
+        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+        const material = new THREE.PointsMaterial({
+            size: 0.14,
+            vertexColors: true,
+            transparent: true,
+            opacity: 0.8,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false
+        });
+
+        const particleSystem = new THREE.Points(geometry, material);
+        scene.add(particleSystem);
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const posAttr = geometry.attributes.position;
+            
+            pCenter.lerp(targetPCenter, 0.12);
+
+            for (let i = 0; i < particleCount; i++) {
+                const pt = starFields[i];
+
+                // 游离背景粒子和待机状态下的粒子永远全屏自由流浪
+                pt.originX += pt.speedX; pt.originY += pt.speedY;
+                if (Math.abs(pt.originX) > 38) pt.speedX *= -1;
+                if (Math.abs(pt.originY) > 28) pt.speedY *= -1;
+
+                if (activePattern === "standby" || !pt.isGatherable) {
+                    posAttr.array[i*3] += (pt.originX - posAttr.array[i*3]) * 0.04;
+                    posAttr.array[i*3+1] += (pt.originY - posAttr.array[i*3+1]) * 0.04;
+                    posAttr.array[i*3+2] += (pt.originZ - posAttr.array[i*3+2]) * 0.04;
+                } else {
+                    // 触发手势：聚拢到图片正下方的对应阴影轮廓层
+                    let offset = pt.E;
+                    if (activePattern === "L") offset = pt.L;
+                    else if (activePattern === "V") offset = pt.V;
+                    else if (activePattern === "E") offset = pt.E;
+                    else if (activePattern === "O") offset = pt.O;
+                    else if (activePattern === "Heart" || activePattern === "doubleV") offset = pt.Heart;
+
+                    const tX = pCenter.x + offset.x;
+                    const tY = pCenter.y + offset.y;
+                    const tZ = pCenter.z + offset.z - 1.5; // 死死贴在图片背后层
+
+                    posAttr.array[i*3] += (tX - posAttr.array[i*3]) * 0.09;
+                    posAttr.array[i*3+1] += (tY - posAttr.array[i*3+1]) * 0.09;
+                    posAttr.array[i*3+2] += (tZ - posAttr.array[i*3+2]) * 0.09;
+                }
+            }
+            posAttr.needsUpdate = true;
+            renderer.render(scene, camera3D);
+        }
+        animate();
+
+        window.addEventListener('resize', () => {
+            camera3D.aspect = window.innerWidth / window.innerHeight;
+            camera3D.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+
+        // ==================== 2. MEDIAPIPE 核心识别树与全向平移逻辑 ====================
+        const videoElement = document.getElementById('webcam');
+        const uiHands = document.getElementById('ui-hands');
+        const uiGesture = document.getElementById('ui-gesture');
+        const imgContainer = document.getElementById('gesture-image-container');
+        const displayImg = document.getElementById('display-img');
+
+        let targetImgX = 0, targetImgY = 0;
+        let currentImgX = 0, currentImgY = 0;
+
+        function updateSmoothFollow() {
+            currentImgX += (targetImgX - currentImgX) * 0.12;
+            currentImgY += (targetImgY - currentImgY) * 0.12;
+            imgContainer.style.transform = `translate(calc(-50% + ${currentImgX}px), calc(-50% + ${currentImgY}px))`;
+            requestAnimationFrame(updateSmoothFollow);
+        }
+        updateSmoothFollow();
+
+        function showGestureImage(imgName, patternKey) {
+            if (displayImg.src.indexOf(encodeURIComponent(imgName)) === -1) {
+                displayImg.src = imgName;
+                displayImg.classList.add('show');
+            }
+            activePattern = patternKey; 
+        }
+
+        function hideGestureImage() {
+            displayImg.classList.remove('show');
+            activePattern = "standby"; 
+            targetImgX = 0; targetImgY = 0;
+            targetPCenter.set(0, 0, 0);
+        }
+
+        const hands = new Hands({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
+        hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.6, minTrackingConfidence: 0.6 });
+        hands.onResults(onResults);
+
+        const camera = new Camera(videoElement, {
+            onFrame: async () => { await hands.send({ image: videoElement }); },
+            width: 640, height: 480
+        });
+        camera.start();
+
+        function getDistance(p1, p2) {
+            return Math.sqrt(Math.pow(p1.x - p2.x, 2) + Math.pow(p1.y - p2.y, 2) + Math.pow(p1.z - p2.z, 2));
+        }
+
+        function onResults(results) {
+            const handCount = results.multiHandLandmarks ? results.multiHandLandmarks.length : 0;
+            uiHands.innerText = handCount;
+
+            if (handCount === 0) {
+                uiGesture.innerText = "✨ 漫天璀璨星光";
+                hideGestureImage();
+                return;
+            }
+
+            const leadHand = results.multiHandLandmarks[0];
+            targetImgX = -(leadHand[9].x - 0.5) * 750; 
+            targetImgY = (leadHand[9].y - 0.5) * 550; 
+
+            targetPCenter.x = -(leadHand[9].x - 0.5) * 36;
+            targetPCenter.y = -(leadHand[9].y - 0.5) * 26; 
+
+            // ------------------ 🛠️ 双手决策 ------------------
+            if (handCount === 2) {
+                const hand1 = results.multiHandLandmarks[0];
+                const hand2 = results.multiHandLandmarks[1];
+
+                const h1Inverted = hand1[0].y < hand1[12].y;
+                const h2Inverted = hand2[0].y < hand2[12].y;
+                const h1Ext8 = hand1[8].y < hand1[6].y; const h1Ext12 = hand1[12].y < hand1[10].y;
+                const h2Ext8 = hand2[8].y < hand2[6].y; const h2Ext12 = hand2[12].y < hand2[10].y;
+
+                if (h1Inverted && h2Inverted && h1Ext8 && h1Ext12 && h2Ext8 && h2Ext12) {
+                    uiGesture.innerText = "🙌 匹配手势：双倒V";
+                    showGestureImage("双倒V.png", "doubleV");
+                    return;
+                }
+
+                if (!h1Inverted && !h2Inverted) {
+                    const thumbDistance = getDistance(hand1[4], hand2[4]);
+                    const indexDistance = getDistance(hand1[8], hand2[8]);
+                    if (thumbDistance < 0.22 && indexDistance < 0.25) {
+                        uiGesture.innerText = "❤️ 匹配手势：双手大比心";
+                        showGestureImage("full_heart.png", "Heart");
+                        return;
+                    }
+                }
+                return; 
+            }
+
+            // ------------------ 🛠️ 单手解耦决策树 ------------------
+            const landmarks = results.multiHandLandmarks[0];
+
+            const ext8 = landmarks[8].y < landmarks[6].y;   
+            const ext12 = landmarks[12].y < landmarks[10].y; 
+            const ext16 = landmarks[16].y < landmarks[14].y; 
+            const ext20 = landmarks[20].y < landmarks[18].y; 
+
+            const isInverted = landmarks[0].y < landmarks[12].y; 
+            const d4_8 = getDistance(landmarks[4], landmarks[8]);  
+            const d4_6 = getDistance(landmarks[4], landmarks[6]);  
+
+            if (isInverted && ext8 && ext12 && !ext16) {
+                uiGesture.innerText = "👇 匹配手势：倒V";
+                showGestureImage("倒V.png", "V");
+                return;
+            }
+
+            if (!isInverted && ext8 && ext12 && !ext16 && !ext20) {
+                uiGesture.innerText = "✌️ 匹配手势：正V";
+                showGestureImage("V.png", "V");
+                return;
+            }
+
+            if (!isInverted && !ext8 && ext12 && ext16 && !ext20) {
+                uiGesture.innerText = "🌊 匹配手势：E";
+                showGestureImage("E.png", "E");
+                return;
+            }
+
+            if (!isInverted && ext8 && !ext12 && !ext16 && d4_8 > 0.15) {
+                uiGesture.innerText = "📐 匹配手势：L";
+                showGestureImage("L.png", "L");
+                return;
+            }
+
+            if (!isInverted && !ext12 && !ext16 && !ext20 && d4_6 < 0.065) {
+                uiGesture.innerText = "💖 匹配手势：单边捏心";
+                showGestureImage("half_heart.png", "Heart");
+                return;
+            }
+
+            if (!ext8 && !ext12 && !ext16 && !ext20 && d4_8 > 0.07) {
+                uiGesture.innerText = "✊ 匹配手势：单手握拳 (原O)";
+                showGestureImage("O.png", "O");
+                return;
+            }
+
+            uiGesture.innerText = "🔮 追踪中...无匹配动作";
+            hideGestureImage();
+        }
+    </script>
+</body>
+</html>
