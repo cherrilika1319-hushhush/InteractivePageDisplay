@@ -325,6 +325,7 @@
 
             // 图像与3D坐标点全向跟随主手
             const leadHand = results.multiHandLandmarks[0];
+            window.lastHandLandmarks = leadHand;
             targetImgX = -(leadHand[9].x - 0.5) * 760; 
             targetImgY = (leadHand[9].y - 0.5) * 560; 
             targetPCenter.x = -(leadHand[9].x - 0.5) * 36;
