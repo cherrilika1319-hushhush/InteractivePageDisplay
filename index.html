@@ -14,7 +14,6 @@
         .info-val { font-weight: bold; float: right; }
         .gesture-active { color: #e0aaff; text-shadow: 0 0 10px rgba(224,170,255,0.6); font-size: 16px; }
 
-        /* 🔮 图片渲染图层：置中且置顶，作为粒子光纱的底衬 */
         #gesture-image-container {
             position: absolute;
             top: 50%;
@@ -29,7 +28,6 @@
             max-height: 420px;
             object-fit: contain;
             opacity: 0;
-            /* 引入变量 --img-scale 实现不同手势图片大小的个性化控制 */
             transform: scale(calc(0.7 * var(--img-scale, 1)));
             transition: opacity 0.25s ease, transform 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.15);
             filter: drop-shadow(0 0 15px rgba(162, 132, 242, 0.25));
@@ -65,16 +63,44 @@
         // ==================== 1. 全局配置与基础路径 ====================
         const baseUrl = "https://raw.githubusercontent.com/cherrilika1319-hushhush/InteractivePageDisplay/main/";
         const IMAGE_MAP = {
-            'L': 'L.png',
-            'O': 'O.png',
-            'V': 'V.png',
-            'E': 'E.png',
-            'invV': '倒V.png',
-            'dbInvV': '双倒V.png',
-            'Heart': 'full_heart.png',
+            'L':         'L.png',
+            'O':         'O.png',
+            'V':         'V.png',
+            'E':         'E.png',
+            'invV':      '倒V.png',
+            'dbInvV':    '双倒V.png',
+            'Heart':     'full_heart.png',
             'HalfHeart': 'half_heart.png',
-            'wing': 'Wing.png'
+            'wing':      'Wing.png'
         };
+        // 预加载所有图片，避免手势触发时卡顿
+        const preloadedPixels = {};
+        function preloadAll() {
+            Object.entries(IMAGE_MAP).forEach(([key, file]) => {
+                const url = baseUrl + file;
+                const img = new Image();
+                img.crossOrigin = "anonymous";
+                img.src = url;
+                img.onload = function() {
+                    const canvas = document.createElement('canvas');
+                    canvas.width = 200; canvas.height = 200;
+                    const ctx = canvas.getContext('2d');
+                    const scale = Math.min(200/img.width, 200/img.height);
+                    const w = img.width*scale, h = img.height*scale;
+                    ctx.drawImage(img, (200-w)/2, (200-h)/2, w, h);
+                    const imgData = ctx.getImageData(0,0,200,200).data;
+                    const coords = [];
+                    for (let y=0; y<200; y++) for (let x=0; x<200; x++) {
+                        const idx=(y*200+x)*4;
+                        if (imgData[idx+3]>140 && imgData[idx]>180 && imgData[idx+1]>180) {
+                            coords.push({ x:((x/200)-0.5)*22, y:-((y/200)-0.5)*22 });
+                        }
+                    }
+                    preloadedPixels[key] = coords;
+                };
+            });
+        }
+        preloadAll();
 
         // ==================== 2. THREE.JS 星空/像素重组双模引擎 ====================
         const canvas3D = document.getElementById('canvas-3d');
@@ -95,11 +121,10 @@
         let activePattern = "standby"; 
         let pCenter = new THREE.Vector3(0, 0, 0);
         let targetPCenter = new THREE.Vector3(0, 0, 0);
-        let currentScaleFactor = 1.0; // 实时粒子缩放系数
+        let currentScaleFactor = 1.0;
         let targetScaleFactor = 1.0;
         const colorObj = new THREE.Color();
 
-        // 舒适平滑的初始化背景雪花排布
         for (let i = 0; i < particleCount; i++) {
             const rX = (Math.random() - 0.5) * 75;
             const rY = (Math.random() - 0.5) * 55;
@@ -107,18 +132,16 @@
 
             positions[i*3] = rX; positions[i*3+1] = rY; positions[i*3+2] = rZ;
 
-            // 75% 粒子用于描边轮廓光晕，25% 永远留在背景浮动保证梦核意境
             const isGatherable = i % 4 !== 0;
 
             particlesData.push({
                 originX: rX, originY: rY, originZ: rZ,
                 speedX: (Math.random() - 0.5) * 0.015,
-                speedY: -(Math.random() * 0.02 + 0.01), // 缓缓下落
+                speedY: -(Math.random() * 0.02 + 0.01),
                 isGatherable: isGatherable,
-                tx: 0, ty: 0, tz: 0 // 由像素提取器动态写入的目标局部坐标
+                tx: 0, ty: 0, tz: 0
             });
 
-            // 梦幻淡紫与白色的过渡色
             colorObj.setHSL(0.74 + (Math.random() * 0.04), 0.7, 0.65 + (Math.random() * 0.15));
             colors[i*3] = colorObj.r; colors[i*3+1] = colorObj.g; colors[i*3+2] = colorObj.b;
         }
@@ -130,8 +153,8 @@
             size: 0.15,
             vertexColors: true,
             transparent: true,
-            opacity: 0.5, // 保证像一层浮动的光纱叠加在图片上方
-            blending: THREE.AdditiveBlending, // 发光叠加混合模式，绝不遮挡图片本身
+            opacity: 0.5,
+            blending: THREE.AdditiveBlending,
             depthWrite: false
         });
 
@@ -141,7 +164,7 @@
         // ==================== 3. 核心功能：2D 轮廓像素分析提取器 ====================
         const imgAnalyzer = document.createElement('canvas');
         const analyzerCtx = imgAnalyzer.getContext('2d');
-        imgAnalyzer.width = 200;  // 适中的分析分辨率，平衡性能与精确度
+        imgAnalyzer.width = 200;
         imgAnalyzer.height = 200;
 
         function extractPatternPixels(imgUrl) {
@@ -150,7 +173,6 @@
             img.src = imgUrl;
             img.onload = function() {
                 analyzerCtx.clearRect(0, 0, 200, 200);
-                // 保持纵横比居中绘制
                 const scale = Math.min(200 / img.width, 200 / img.height);
                 const w = img.width * scale;
                 const h = img.height * scale;
@@ -159,7 +181,6 @@
                 const imgData = analyzerCtx.getImageData(0, 0, 200, 200).data;
                 const validCoords = [];
 
-                // 扫描白色或高亮度的线条轮廓像素
                 for (let y = 0; y < 200; y += 1) {
                     for (let x = 0; x < 200; x += 1) {
                         const idx = (y * 200 + x) * 4;
@@ -168,11 +189,9 @@
                         const b = imgData[idx+2];
                         const a = imgData[idx+3];
                         
-                        // 提取白色或接近白色的浅色骨架线条 (阈值 > 180)
                         if (a > 140 && r > 180 && g > 180) {
-                            // 将 200x200 画布坐标映射到 WebGL 3D 空间范围（如约 -11 到 11）
                             const threeX = ((x / 200) - 0.5) * 22;
-                            const threeY = -((y / 200) - 0.5) * 22; // 3D Y轴向上，2D向下，需取反
+                            const threeY = -((y / 200) - 0.5) * 22;
                             validCoords.push({ x: threeX, y: threeY });
                         }
                     }
@@ -180,56 +199,52 @@
 
                 if (validCoords.length === 0) return;
 
-                // 将扫描出的骨架坐标均匀散落、分配给所有可聚集粒子
                 for (let i = 0; i < particleCount; i++) {
                     if (particlesData[i].isGatherable) {
                         const targetPixel = validCoords[Math.floor(Math.random() * validCoords.length)];
                         particlesData[i].tx = targetPixel.x;
                         particlesData[i].ty = targetPixel.y;
-                        particlesData[i].tz = (Math.random() - 0.5) * 0.4; // Z轴轻微浮动厚度
+                        particlesData[i].tz = (Math.random() - 0.5) * 0.4;
                     }
                 }
             };
             img.onerror = function() {
-                console.error("❌ 无法加载或解析目标图片资源，请检查网络或配置路径: ", imgUrl);
+                console.error("❌ 无法加载图片: ", imgUrl);
             };
         }
 
-        // ==================== 4. 渲染循环 (流畅 3D 雪花下落与精确重组) ====================
+        // ==================== 4. 渲染循环 ====================
         function animate() {
             requestAnimationFrame(animate);
             const posAttr = geometry.attributes.position;
             
-            pCenter.lerp(targetPCenter, 0.1); // 手势中心平滑缓动
-            currentScaleFactor = THREE.MathUtils.lerp(currentScaleFactor, targetScaleFactor, 0.1); // 缩放平滑过渡
+            pCenter.lerp(targetPCenter, 0.18);  // 加快中心跟随速度
+            currentScaleFactor = THREE.MathUtils.lerp(currentScaleFactor, targetScaleFactor, 0.1);
 
             for (let i = 0; i < particleCount; i++) {
                 const pt = particlesData[i];
 
-                // 基础背景逻辑：粒子在任意状态下 originX/Y 都保持下落雪花微动
                 pt.originY += pt.speedY;
                 pt.originX += Math.sin(pt.originY * 0.05) * 0.008;
                 if (pt.originY < -28) { pt.originY = 28; pt.originX = (Math.random() - 0.5) * 75; }
 
                 if (activePattern === "standby" || !pt.isGatherable) {
-                    // 待机或游离态粒子：缓动回流到自然雪花状态
-                    posAttr.array[i*3] += (pt.originX - posAttr.array[i*3]) * 0.04;
-                    posAttr.array[i*3+1] += (pt.originY - posAttr.array[i*3+1]) * 0.04;
-                    posAttr.array[i*3+2] += (pt.originZ - posAttr.array[i*3+2]) * 0.04;
+                    // 散开速度降低（0.04→0.02），让粒子更慢回到雪花状态
+                    posAttr.array[i*3]   += (pt.originX - posAttr.array[i*3])   * 0.02;
+                    posAttr.array[i*3+1] += (pt.originY - posAttr.array[i*3+1]) * 0.02;
+                    posAttr.array[i*3+2] += (pt.originZ - posAttr.array[i*3+2]) * 0.02;
                 } else {
-                    // 激活态：粒子光晕精准贴合当前图片的白色线条轮廓，并随手同步移动
-                    // 根据当前图片的物理放大系数(currentScaleFactor)对粒子坐标作等比拉伸
                     const finalTargetX = pCenter.x + pt.tx * currentScaleFactor;
                     const finalTargetY = pCenter.y + pt.ty * currentScaleFactor;
-                    const finalTargetZ = pCenter.z + pt.tz + 0.2; 
+                    const finalTargetZ = pCenter.z + pt.tz + 0.2;
 
-                    posAttr.array[i*3] += (finalTargetX - posAttr.array[i*3]) * 0.12;
-                    posAttr.array[i*3+1] += (finalTargetY - posAttr.array[i*3+1]) * 0.12;
-                    posAttr.array[i*3+2] += (finalTargetZ - posAttr.array[i*3+2]) * 0.12;
+                    // 聚合速度提高（0.12→0.18），跟手移动更紧
+                    posAttr.array[i*3]   += (finalTargetX - posAttr.array[i*3])   * 0.18;
+                    posAttr.array[i*3+1] += (finalTargetY - posAttr.array[i*3+1]) * 0.18;
+                    posAttr.array[i*3+2] += (finalTargetZ - posAttr.array[i*3+2]) * 0.18;
                 }
             }
 
-            // 状态过渡时微调粒子大小，强化重组发光感
             if (activePattern !== "standby") {
                 material.size = THREE.MathUtils.lerp(material.size, 0.20, 0.08);
             } else {
@@ -248,7 +263,7 @@
         });
 
 
-        // ==================== 5. MEDIAPIPE 高精度抗抖动手势识别决策树 ====================
+        // ==================== 5. MEDIAPIPE 手势识别 ====================
         const videoElement = document.getElementById('webcam');
         const uiHands = document.getElementById('ui-hands');
         const uiGesture = document.getElementById('ui-gesture');
@@ -258,7 +273,6 @@
         let targetImgX = 0, targetImgY = 0;
         let currentImgX = 0, currentImgY = 0;
         
-        // 5帧防抖机制全局变量
         let gestureHistory = [];
         const DEBOUNCE_FRAMES = 5;
 
@@ -272,32 +286,190 @@
 
         function showGestureImage(imgName, patternKey, customScale = 1.0) {
             let fullUrl = imgName.startsWith('http') ? imgName : baseUrl + imgName;
-            
-            // 动态调节 CSS 中的图片尺寸变量
             displayImg.style.setProperty('--img-scale', customScale);
-            // 同步让 3D 空间中的粒子按比例放大描边
             targetScaleFactor = customScale;
 
             if (activePattern !== patternKey) {
-                // 更换手势状态时，立刻命令分析器重新提取该图的白色线条像素数据
-                extractPatternPixels(fullUrl);
+                // 优先用预加载的像素数据，秒速响应
+                if (preloadedPixels[patternKey] && preloadedPixels[patternKey].length > 0) {
+                    const coords = preloadedPixels[patternKey];
+                    for (let i = 0; i < particleCount; i++) {
+                        if (particlesData[i].isGatherable) {
+                            const p = coords[Math.floor(Math.random() * coords.length)];
+                            particlesData[i].tx = p.x;
+                            particlesData[i].ty = p.y;
+                            particlesData[i].tz = (Math.random()-0.5)*0.4;
+                        }
+                    }
+                } else {
+                    extractPatternPixels(fullUrl);
+                }
                 activePattern = patternKey;
             }
             
             if (displayImg.src !== fullUrl) {
                 displayImg.src = fullUrl;
-                displayImg.classList.add('show');
             }
+            displayImg.classList.add('show');
         }
 
         function hideGestureImage() {
             displayImg.classList.remove('show');
-            activePattern = "standby"; 
+            activePattern = "standby";
             targetScaleFactor = 1.0;
             targetImgX = 0; targetImgY = 0;
             targetPCenter.set(0, 0, 0);
         }
 
+        // ==================== 手势辅助计算函数 ====================
+
+        function getDistance(p1, p2) {
+            return Math.sqrt(
+                Math.pow(p1.x - p2.x, 2) +
+                Math.pow(p1.y - p2.y, 2) +
+                Math.pow(p1.z - p2.z, 2)
+            );
+        }
+
+        // 计算三点角度（b为顶点），返回度数
+        function calcAngle(a, b, c) {
+            const ba = { x: a.x - b.x, y: a.y - b.y };
+            const bc = { x: c.x - b.x, y: c.y - b.y };
+            const dot = ba.x * bc.x + ba.y * bc.y;
+            const magBa = Math.sqrt(ba.x * ba.x + ba.y * ba.y);
+            const magBc = Math.sqrt(bc.x * bc.x + bc.y * bc.y);
+            const cosA = Math.max(-1, Math.min(1, dot / (magBa * magBc + 1e-6)));
+            return Math.acos(cosA) * (180 / Math.PI);
+        }
+
+        // 计算手腕→指尖方向角（度），0°=右，-90°=上，90°=下
+        function calcDirectionAngle(p1, p2) {
+            return Math.atan2(p2.y - p1.y, p2.x - p1.x) * (180 / Math.PI);
+        }
+
+        // 提取单手的角度特征（与 Python 采集脚本对应）
+        function extractHandAngles(lm) {
+            return {
+                thumb_angle:  calcAngle(lm[1], lm[2], lm[4]),
+                index_angle:  calcAngle(lm[5], lm[6], lm[8]),
+                middle_angle: calcAngle(lm[9], lm[10], lm[12]),
+                ring_angle:   calcAngle(lm[13], lm[14], lm[16]),
+                pinky_angle:  calcAngle(lm[17], lm[18], lm[20]),
+                wrist_to_middle_angle: calcDirectionAngle(lm[0], lm[12])
+            };
+        }
+
+        // ==================== 单手手势判定函数 ====================
+
+        // ✅ 修改1：新 E 手势
+        // 数据（55样本）：middle≈172, ring≈171, pinky≈165（伸直），index≈62（弯曲）
+        // finger_spread≈0.17（手指展开），方向角≈-38°（-52~-21范围）
+        function isGesture_E_new(lm) {
+            const a = extractHandAngles(lm);
+            // 计算指尖展开程度（E手势手指是展开的）
+            const tips = [4, 8, 12, 16, 20];
+            let spreadSum = 0, count = 0;
+            for (let i = 0; i < tips.length; i++) {
+                for (let j = i + 1; j < tips.length; j++) {
+                    spreadSum += getDistance(lm[tips[i]], lm[tips[j]]);
+                    count++;
+                }
+            }
+            const fingerSpread = spreadSum / count;
+
+            return (
+                a.index_angle  < 95  &&   // 食指弯曲成OK圆圈（均值64）
+                a.middle_angle > 165 &&   // 中指伸直（均值175）
+                a.ring_angle   > 170 &&   // 无名指伸直（均值179）
+                a.pinky_angle  > 168 &&   // 小拇指伸直（均值178）
+                fingerSpread   > 0.22     // 手指展开（均值0.33）
+            );
+        }
+
+        // 数字1手势：食指朝上伸直，其余四指弯曲，拇指紧靠手掌（严格排除L）
+        function isGesture_One(lm) {
+            const a = extractHandAngles(lm);
+            // 食指朝上（指尖y < MCP关节y）
+            const indexUp = lm[8].y < lm[5].y;
+            // 拇指横向张开程度（L手势拇指x离手掌远）
+            const thumbSpreadX = Math.abs(lm[4].x - lm[2].x);
+            // 拇指指尖到食指根部距离（L手势这个距离大）
+            const thumbToIndexBase = getDistance(lm[4], lm[5]);
+            // 拇指指尖到中指根部距离（拇指收拢时靠近手掌中部）
+            const thumbToMidBase = getDistance(lm[4], lm[9]);
+            // 拇指食指距离（排除OK）
+            const d4_8 = getDistance(lm[4], lm[8]);
+            return (
+                indexUp             &&
+                thumbSpreadX < 0.05 &&        // 拇指不横张（L手势通常>0.08）
+                thumbToIndexBase < 0.12 &&    // 拇指靠近食指根（L手势此距离大）
+                d4_8 > 0.08         &&        // 排除OK手势
+                a.index_angle  > 155 &&       // 食指伸直
+                a.middle_angle < 115 &&       // 中指弯曲
+                a.ring_angle   < 115 &&       // 无名指弯曲
+                a.pinky_angle  < 125          // 小拇指弯曲
+            );
+        }
+        // Z左手：四指伸直并拢斜向右上（均值-64°），spread≈0.10
+        function isGesture_Z_left(lm) {
+            const a = extractHandAngles(lm);
+            const tips = [4, 8, 12, 16, 20];
+            let spreadSum = 0, count = 0;
+            for (let i = 0; i < tips.length; i++) {
+                for (let j = i + 1; j < tips.length; j++) {
+                    spreadSum += getDistance(lm[tips[i]], lm[tips[j]]);
+                    count++;
+                }
+            }
+            const fingerSpread = spreadSum / count;
+            return (
+                a.index_angle  > 170 &&
+                a.middle_angle > 168 &&
+                a.ring_angle   > 168 &&
+                a.pinky_angle  > 160 &&
+                fingerSpread   > 0.07 &&
+                fingerSpread   < 0.14 &&
+                a.wrist_to_middle_angle > -72 &&
+                a.wrist_to_middle_angle < -55
+            );
+        }
+        // Z右手：四指水平伸直并拢（均值±158°），spread≈0.05
+        function isGesture_Z_right(lm) {
+            const a = extractHandAngles(lm);
+            const tips = [4, 8, 12, 16, 20];
+            let spreadSum = 0, count = 0;
+            for (let i = 0; i < tips.length; i++) {
+                for (let j = i + 1; j < tips.length; j++) {
+                    spreadSum += getDistance(lm[tips[i]], lm[tips[j]]);
+                    count++;
+                }
+            }
+            const fingerSpread = spreadSum / count;
+            const dirAbs = Math.abs(a.wrist_to_middle_angle);
+            return (
+                a.middle_angle > 140 &&
+                a.ring_angle   > 142 &&
+                fingerSpread   < 0.09 &&
+                dirAbs > 140
+            );
+        }
+
+        // ✅ 恢复：倒V（单手）
+        // 数据：index≈176, middle≈178（伸直），ring≈28, pinky≈37（弯曲）
+        // 方向角≈93°（手指朝下，80~110范围）
+        function isGesture_invV(lm) {
+            const a = extractHandAngles(lm);
+            return (
+                a.index_angle  > 160 &&          // 食指伸直
+                a.middle_angle > 170 &&          // 中指伸直
+                a.ring_angle   < 80  &&          // 无名指弯曲
+                a.pinky_angle  < 80  &&          // 小拇指弯曲
+                a.wrist_to_middle_angle > 75 &&  // 手指朝下方向
+                a.wrist_to_middle_angle < 115
+            );
+        }
+
+        // ==================== 主识别逻辑 ====================
         const hands = new Hands({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
         hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.6, minTrackingConfidence: 0.6 });
         hands.onResults(onResults);
@@ -308,22 +480,17 @@
         });
         camera.start();
 
-        function getDistance(p1, p2) {
-            return Math.sqrt(Math.pow(p1.x - p2.x, 2) + Math.pow(p1.y - p2.y, 2) + Math.pow(p1.z - p2.z, 2));
-        }
-
         function onResults(results) {
             const handCount = results.multiHandLandmarks ? results.multiHandLandmarks.length : 0;
             uiHands.innerText = handCount;
 
             if (handCount === 0) {
-                gestureHistory = []; // 清空防抖队列
+                gestureHistory = [];
                 uiGesture.innerText = "✨ 雪花微粒背景";
                 hideGestureImage();
                 return;
             }
 
-            // 图像与3D坐标点全向跟随主手
             const leadHand = results.multiHandLandmarks[0];
             window.lastHandLandmarks = leadHand;
             targetImgX = -(leadHand[9].x - 0.5) * 760; 
@@ -331,98 +498,87 @@
             targetPCenter.x = -(leadHand[9].x - 0.5) * 36;
             targetPCenter.y = -(leadHand[9].y - 0.5) * 26; 
 
-            let rawGesture = "none"; // 本帧初步判定的原始手势标签
+            let rawGesture = "none";
 
-            // ------------------ 🛠️ 双手控制流 ------------------
+            // ------------------ 双手控制流 ------------------
             if (handCount === 2) {
                 const h1 = results.multiHandLandmarks[0];
                 const h2 = results.multiHandLandmarks[1];
 
-                const h1Inv = h1[0].y < h1[12].y;
-                const h2Inv = h2[0].y < h2[12].y;
-                const h1Ext8 = h1[8].y < h1[6].y; const h1Ext12 = h1[12].y < h1[10].y;
-                const h2Ext8 = h2[8].y < h2[6].y; const h2Ext12 = h2[12].y < h2[10].y;
-
-                // 双倒V判定
-                if (h1Inv && h2Inv && h1Ext8 && h1Ext12 && h2Ext8 && h2Ext12) {
+                // ✅ 恢复：双倒V —— 两手同时满足倒V条件
+                if (isGesture_invV(h1) && isGesture_invV(h2)) {
                     rawGesture = "dbInvV";
-                } else if (!h1Inv && !h2Inv) {
-                    // 双手大比心
+                }
+                // Z手势：左手+右手同时满足各自条件
+                else if (
+                    (isGesture_Z_left(h1) && isGesture_Z_right(h2)) ||
+                    (isGesture_Z_left(h2) && isGesture_Z_right(h1))
+                ) {
+                    rawGesture = "HalfHeart";
+                }
+                // 双手大比心
+                else {
                     const thumbDistance = getDistance(h1[4], h2[4]);
                     const indexDistance = getDistance(h1[8], h2[8]);
                     if (thumbDistance < 0.22 && indexDistance < 0.25) {
                         rawGesture = "Heart";
                     }
                 }
+
+            // ------------------ 单手控制流 ------------------
             } else {
-                // ------------------ 🛠️ 单手解耦分类树 (完美重构与融合) ------------------
-                const landmarks = results.multiHandLandmarks[0];
+                const lm = results.multiHandLandmarks[0];
 
-                // 核心：精准读取四根核心手指的绝对伸直状态
-                const f8 = landmarks[8].y < landmarks[6].y;   // 食指
-                const f12 = landmarks[12].y < landmarks[10].y; // 中指
-                const f16 = landmarks[16].y < landmarks[14].y; // 无名指
-                const f20 = landmarks[20].y < landmarks[18].y; // 小指
-                
-                // 拇指展开幅度 (横向坐标与食指/大拇指关节间距)
-                const f4 = Math.abs(landmarks[4].x - landmarks[2].x) > 0.045;
-
-                // 辅助数据：正倒立与捏合间距
-                const isHandInverted = landmarks[0].y < landmarks[12].y; 
-                const d4_8 = getDistance(landmarks[4], landmarks[8]);  
-                const d4_6 = getDistance(landmarks[4], landmarks[6]);  
-
-                // 统计除大拇指之外，伸直的指头总数
+                // 沿用原有辅助变量（保持其他手势不变）
+                const f8  = lm[8].y  < lm[6].y;
+                const f12 = lm[12].y < lm[10].y;
+                const f16 = lm[16].y < lm[14].y;
+                const f20 = lm[20].y < lm[18].y;
+                const f4  = Math.abs(lm[4].x - lm[2].x) > 0.045;
+                const d4_8 = getDistance(lm[4], lm[8]);
+                const d4_6 = getDistance(lm[4], lm[6]);
                 const extendedFingersCount = [f8, f12, f16, f20].filter(Boolean).length;
 
-                if (isHandInverted) {
-                    // 倒V手势：手掌倒置，且只有食指中指伸出
-                    if (extendedFingersCount === 2 && f8 && f12) {
-                        rawGesture = "invV";
-                    }
-                } else {
-                    // 针对正立手掌进行强有力分流
-                    
-                    // ✨【优化重点一】重新梳理 Wing(五指张开) 与 E(并拢或四指直) 手势
-                    if (extendedFingersCount === 4 || (f12 && f16 && f20)) {
-                        // 如果食、中、无名、小指几乎都直了，或者中无名小三指是直的：
-                        if (f8 && f4) {
-                            rawGesture = "wing"; // 食指直着且大拇指极度外张 -> 五指张开 Wing 
-                        } else {
-                            rawGesture = "E";    // 大拇指回收或半弯曲，符合主流用户习惯的 E 骨架
-                        }
-                    } 
-                    // 仅2根手指伸直
-                    else if (extendedFingersCount === 2) {
-                        if (f8 && f12) {
-                            rawGesture = "V";
-                        }
-                    } 
-                    // 仅1根手指伸直
-                    else if (extendedFingersCount === 1) {
-                        if (f8 && f4 && d4_8 > 0.11) {
-                            rawGesture = "L"; // 食指朝上，大拇指横向大张开
-                        }
-                    } 
-                    // 0根手指伸直 (握拳捏合类)
-                    else if (extendedFingersCount === 0) {
-                        if (d4_6 < 0.065) {
-                            rawGesture = "HalfHeart";
-                        } else if (d4_8 > 0.065) {
-                            rawGesture = "O";
-                        }
+                // E手势：OK+三指
+                if (isGesture_E_new(lm)) {
+                    rawGesture = "E";
+                }
+                // 数字1：食指朝上单指
+                else if (isGesture_One(lm)) {
+                    rawGesture = "HalfHeart";
+                }
+                // 倒V（单手）
+                else if (isGesture_invV(lm)) {
+                    rawGesture = "invV";
+                }
+                // Wing：五指张开
+                else if (extendedFingersCount === 4 && f8 && f4) {
+                    rawGesture = "wing";
+                }
+                // V：正立剪刀手（食指+中指伸直，其余弯曲）
+                else if (extendedFingersCount === 2 && f8 && f12) {
+                    rawGesture = "V";
+                }
+                // L：食指朝上+大拇指横张
+                else if (extendedFingersCount === 1 && f8 && f4 && d4_8 > 0.11) {
+                    rawGesture = "L";
+                }
+                // 握拳类（0根伸直）
+                else if (extendedFingersCount === 0) {
+                    if (d4_8 > 0.065) {
+                        rawGesture = "O";
                     }
                 }
             }
 
-            // ------------------ 🛠️ 滚动防抖逻辑处理 ------------------
+            // ------------------ 防抖逻辑 ------------------
             gestureHistory.push(rawGesture);
             if (gestureHistory.length > DEBOUNCE_FRAMES) {
                 gestureHistory.shift();
             }
 
-            // 检查历史队列是否全体一致
-            const allMatch = gestureHistory.length === DEBOUNCE_FRAMES && gestureHistory.every(v => v === gestureHistory[0]);
+            const allMatch = gestureHistory.length === DEBOUNCE_FRAMES &&
+                             gestureHistory.every(v => v === gestureHistory[0]);
             
             if (allMatch) {
                 const finalGesture = gestureHistory[0];
@@ -435,14 +591,13 @@
                     showGestureImage(IMAGE_MAP.wing, "wing", 1.0);
                 } else if (finalGesture === "E") {
                     uiGesture.innerText = "🌊 匹配手势：伸直手掌 (E)";
-                    // ✨【优化重点二】在这里设置 1.4，让 E 手势触发的图片比正常大 1.4 倍
-                    showGestureImage(IMAGE_MAP.E, "E", 1.4); 
+                    showGestureImage(IMAGE_MAP.E, "E", 1.4);
                 } else if (finalGesture === "V") {
                     uiGesture.innerText = "✌️ 匹配手势：正V";
                     showGestureImage(IMAGE_MAP.V, "V", 1.0);
                 } else if (finalGesture === "invV") {
                     uiGesture.innerText = "👇 匹配手势：单手倒V";
-                    showGestureImage(IMAGE_MAP.invV, "V", 1.0);
+                    showGestureImage(IMAGE_MAP.invV, "invV", 1.0);
                 } else if (finalGesture === "dbInvV") {
                     uiGesture.innerText = "🙌 匹配手势：双倒V";
                     showGestureImage(IMAGE_MAP.dbInvV, "dbInvV", 1.0);
